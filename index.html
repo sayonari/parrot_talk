@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>オウム返しプログラム</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+    </style>
+    <script src="./js/jungle.js"></script>
+</head>
+
+<body>
+    <h1>オウム返しプログラム</h1>
+    <button id="start">音声の監視を開始</button>
+    <audio id="player"></audio>
+    <h2>音量</h2>
+    <canvas id="volumeCanvas" width="300" height="100"></canvas>
+    <h2>スペクトラム</h2>
+    <canvas id="spectrumCanvas" width="300" height="100"></canvas>
+
+
+
+    <script>
+        const startBtn = document.getElementById('start');
+        const player = document.getElementById('player');
+        const volumeCanvas = document.getElementById('volumeCanvas');
+        const spectrumCanvas = document.getElementById('spectrumCanvas');
+        const volumeCtx = volumeCanvas.getContext('2d');
+        const spectrumCtx = spectrumCanvas.getContext('2d');
+        const threshold = 75; // 音量の閾値
+        let isRecording = false;
+        let chunks = [];
+        let mediaRecorder;
+        let audioContext;
+        let analyser;
+
+        startBtn.onclick = async () => {
+            startBtn.style.display = 'none';
+            audioContext = new AudioContext();
+            analyser = audioContext.createAnalyser();
+
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    const source = audioContext.createMediaStreamSource(stream);
+                    source.connect(analyser);
+                    mediaRecorder = new MediaRecorder(stream);
+
+                    mediaRecorder.ondataavailable = e => {
+                        chunks.push(e.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(chunks, { type: 'audio/ogg; codecs=opus' });
+                        chunks = [];
+                        const audioURL = window.URL.createObjectURL(blob);
+
+                        // 音程を変更する部分
+                        const reader = new FileReader();
+                        reader.onload = async () => {
+                            const buffer = new Uint8Array(reader.result);
+                            const audioBuffer = await audioContext.decodeAudioData(buffer.buffer);
+                            const source = audioContext.createBufferSource();
+                            const jungle = new Jungle(audioContext);
+                            source.buffer = audioBuffer;
+                            source.connect(jungle.input);
+                            jungle.output.connect(audioContext.destination);
+                            jungle.setPitchOffset(3); // 音程変更倍率（3倍）
+                            source.start();
+                        };
+                        reader.readAsArrayBuffer(blob);
+                    };
+
+
+
+                    checkVolume();
+                });
+        };
+
+        function drawVolume(volume) {
+            volumeCtx.clearRect(0, 0, volumeCanvas.width, volumeCanvas.height);
+
+            volumeCtx.fillStyle = 'lightgray';
+            volumeCtx.fillRect(0, 0, volumeCanvas.width, volumeCanvas.height);
+
+            volumeCtx.fillStyle = volume > threshold ? 'red' : 'green';
+            volumeCtx.fillRect(0, volumeCanvas.height - volume, volumeCanvas.width, volume);
+
+            volumeCtx.fillStyle = 'blue';
+            volumeCtx.fillRect(0, volumeCanvas.height - threshold, volumeCanvas.width, 1);
+        }
+
+        function drawSpectrum(dataArray) {
+            spectrumCtx.clearRect(0, 0, spectrumCanvas.width, spectrumCanvas.height);
+
+            const barWidth = spectrumCanvas.width / dataArray.length;
+            for (let i = 0; i < dataArray.length; i++) {
+                const barHeight = dataArray[i];
+                spectrumCtx.fillStyle = 'green';
+                spectrumCtx.fillRect(i * barWidth, spectrumCanvas.height - barHeight, barWidth, barHeight);
+            }
+        }
+
+        function checkVolume() {
+            analyser.fftSize = 32;
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            const loop = () => {
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+
+                for (let i = 0; i < bufferLength; i++) {
+                    sum += dataArray[i];
+                }
+
+                const averageVolume = sum / bufferLength;
+
+                if (!isRecording && averageVolume > threshold) {
+                    isRecording = true;
+                    mediaRecorder.start();
+                } else if (isRecording && averageVolume < threshold) {
+                    isRecording = false;
+                    mediaRecorder.stop();
+                }
+
+                drawVolume(averageVolume);
+                drawSpectrum(dataArray);
+
+                requestAnimationFrame(loop);
+            };
+
+            loop();
+        }
+    </script>
+</body>
+
+</html>
